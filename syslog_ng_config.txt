@@ -1,0 +1,316 @@
+# Syslog-ng Ana Yapılandırma Dosyası
+# /config/syslog-ng.conf
+
+@version: 4.4
+@include "scl.conf"
+
+# Global Seçenekler
+options {
+    # Genel ayarlar
+    chain_hostnames(off);
+    flush_lines(0);
+    use_dns(no);
+    use_fqdn(no);
+    owner("root");
+    group("adm");
+    perm(0640);
+    stats_freq(0);
+    bad_hostname("^gconfd$");
+    
+    # Zaman ayarları
+    time_zone("Europe/Istanbul");
+    ts_format(iso);
+    
+    # Performans ayarları
+    log_fifo_size(10000);
+    threaded(yes);
+};
+
+# Kaynaklar (Sources)
+source s_local {
+    system();
+    internal();
+    unix-dgram("/dev/log");
+};
+
+source s_network_udp {
+    network(
+        transport("udp")
+        port(514)
+        max-connections(1000)
+        log-iw-size(10000)
+    );
+};
+
+source s_network_tcp {
+    network(
+        transport("tcp")
+        port(514)
+        max-connections(1000)
+        log-iw-size(10000)
+        keep-alive(yes)
+    );
+};
+
+source s_network_tls {
+    network(
+        transport("tls")
+        port(6514)
+        tls(
+            key-file("/etc/syslog-ng/tls/server.key")
+            cert-file("/etc/syslog-ng/tls/server.crt")
+            ca-dir("/etc/syslog-ng/tls/ca")
+            peer-verify(optional-untrusted)
+        )
+        max-connections(1000)
+        log-iw-size(10000)
+    );
+};
+
+# JSON formatında log kaynağı
+source s_json {
+    network(
+        transport("tcp")
+        port(601)
+        flags(no-parse)
+        max-connections(500)
+    );
+};
+
+# Filtreler (Filters)
+filter f_emergency { level(emerg); };
+filter f_alert { level(alert); };
+filter f_critical { level(crit); };
+filter f_error { level(err); };
+filter f_warning { level(warn); };
+filter f_notice { level(notice); };
+filter f_info { level(info); };
+filter f_debug { level(debug); };
+
+# Facility filtreleri
+filter f_auth { facility(auth) or facility(authpriv); };
+filter f_cron { facility(cron); };
+filter f_daemon { facility(daemon); };
+filter f_kern { facility(kern); };
+filter f_mail { facility(mail); };
+filter f_news { facility(news); };
+filter f_syslog { facility(syslog); };
+filter f_user { facility(user); };
+filter f_uucp { facility(uucp); };
+filter f_local0 { facility(local0); };
+filter f_local1 { facility(local1); };
+filter f_local2 { facility(local2); };
+filter f_local3 { facility(local3); };
+filter f_local4 { facility(local4); };
+filter f_local5 { facility(local5); };
+filter f_local6 { facility(local6); };
+filter f_local7 { facility(local7); };
+
+# Özel filtreler
+filter f_firewall { program("iptables") or program("ufw"); };
+filter f_ssh { program("ssh") or program("sshd"); };
+filter f_web { program("apache") or program("nginx") or program("httpd"); };
+filter f_database { program("mysql") or program("postgresql") or program("mongodb"); };
+
+# Parser'lar
+parser p_apache {
+    apache-accesslog-parser();
+};
+
+parser p_json {
+    json-parser(prefix(".json."));
+};
+
+# Hedefler (Destinations) - /loglama/aktif klasörüne kaydetme
+destination d_aktif_all {
+    file("/loglama/aktif/all.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+        dir-perm(0755)
+        perm(0644)
+    );
+};
+
+destination d_aktif_auth {
+    file("/loglama/aktif/auth.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_cron {
+    file("/loglama/aktif/cron.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_daemon {
+    file("/loglama/aktif/daemon.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_kern {
+    file("/loglama/aktif/kernel.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_mail {
+    file("/loglama/aktif/mail.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_syslog {
+    file("/loglama/aktif/syslog.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+# Seviye bazlı destinasyonlar
+destination d_aktif_emergency {
+    file("/loglama/aktif/emergency.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_error {
+    file("/loglama/aktif/error.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_warning {
+    file("/loglama/aktif/warning.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+# Özel servis destinasyonları
+destination d_aktif_firewall {
+    file("/loglama/aktif/firewall.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_ssh {
+    file("/loglama/aktif/ssh.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_web {
+    file("/loglama/aktif/web.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+destination d_aktif_database {
+    file("/loglama/aktif/database.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+# JSON formatında log kaydetme
+destination d_aktif_json {
+    file("/loglama/aktif/structured.log"
+        template("$(format-json --scope rfc5424 --scope dot-nv-pairs --rekey .* --shift 1 --scope nv-pairs --exclude DATE)\n")
+        create-dirs(yes)
+    );
+};
+
+# Günlük dosyalar (tarih bazlı)
+destination d_aktif_daily {
+    file("/loglama/aktif/daily-${YEAR}-${MONTH}-${DAY}.log"
+        template("${ISODATE} ${HOST} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+# Host bazlı log kayıtları
+destination d_aktif_hosts {
+    file("/loglama/aktif/hosts/${HOST}.log"
+        template("${ISODATE} ${PROGRAM}[${PID}]: ${MESSAGE}\n")
+        create-dirs(yes)
+    );
+};
+
+# Elasticsearch destinasyonu (isteğe bağlı)
+destination d_elasticsearch {
+    elasticsearch-http(
+        index("syslog-${YEAR}.${MONTH}.${DAY}")
+        type("syslog")
+        url("http://elasticsearch:9200/_bulk")
+        template("$(format-json --scope rfc5424 --scope dot-nv-pairs --rekey .* --shift 1 --scope nv-pairs --exclude DATE)")
+    );
+};
+
+# Log kuralları (Log paths)
+log {
+    source(s_local);
+    source(s_network_udp);
+    source(s_network_tcp);
+    destination(d_aktif_all);
+    destination(d_aktif_daily);
+    destination(d_aktif_hosts);
+    destination(d_aktif_json);
+    flags(final);
+};
+
+# Facility bazlı routing
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_auth); destination(d_aktif_auth); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_cron); destination(d_aktif_cron); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_daemon); destination(d_aktif_daemon); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_kern); destination(d_aktif_kern); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_mail); destination(d_aktif_mail); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_syslog); destination(d_aktif_syslog); };
+
+# Seviye bazlı routing
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_emergency); destination(d_aktif_emergency); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_error); destination(d_aktif_error); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_warning); destination(d_aktif_warning); };
+
+# Özel servis routing
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_firewall); destination(d_aktif_firewall); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_ssh); destination(d_aktif_ssh); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_web); destination(d_aktif_web); };
+log { source(s_local); source(s_network_udp); source(s_network_tcp); filter(f_database); destination(d_aktif_database); };
+
+# TLS logları
+log {
+    source(s_network_tls);
+    destination(d_aktif_all);
+    destination(d_aktif_json);
+    destination(d_elasticsearch);
+};
+
+# JSON logları
+log {
+    source(s_json);
+    parser(p_json);
+    destination(d_aktif_json);
+    destination(d_elasticsearch);
+};
+
+# İstatistik logları
+log {
+    source(s_local);
+    destination(d_aktif_all);
+    flags(catchall);
+};
+
+# Include ek yapılandırma dosyaları
+@include "/etc/syslog-ng/conf.d/*.conf"

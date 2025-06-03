@@ -1,0 +1,269 @@
+version: '3.8'
+
+services:
+  # Syslog-ng Ana Servis
+  syslog-ng:
+    image: balabit/syslog-ng:latest
+    container_name: syslog-ng-server
+    restart: unless-stopped
+    ports:
+      - "514:514/udp"    # Syslog UDP
+      - "514:514/tcp"    # Syslog TCP
+      - "601:601/tcp"    # Syslog-ng TLS
+      - "6514:6514/tcp"  # Syslog TLS
+    volumes:
+      - ./config/syslog-ng.conf:/etc/syslog-ng/syslog-ng.conf:ro
+      - ./config/syslog-ng.d:/etc/syslog-ng/conf.d:ro
+      - syslog_data:/var/log/syslog-ng
+      - log_active:/loglama/aktif
+      - log_archive:/loglama/arsiv
+      - log_signed:/loglama/imzali
+      - /dev/log:/dev/log:rw
+    environment:
+      - TZ=Europe/Istanbul
+    networks:
+      - syslog-network
+    depends_on:
+      - log-processor
+    labels:
+      - "traefik.enable=false"
+
+  # Log İşleme ve İmzalama Servisi
+  log-processor:
+    build:
+      context: ./log-processor
+      dockerfile: Dockerfile
+    container_name: log-processor
+    restart: unless-stopped
+    volumes:
+      - log_active:/loglama/aktif
+      - log_archive:/loglama/arsiv
+      - log_signed:/loglama/imzali
+      - ./config/syslog_config.php:/app/syslog_config.php:ro
+      - ./logs:/app/logs
+    environment:
+      - TZ=Europe/Istanbul
+      - LOG_LEVEL=INFO
+      - CRON_SCHEDULE=0 * * * *
+    networks:
+      - syslog-network
+    labels:
+      - "traefik.enable=false"
+
+  # Log Rotasyon Servisi
+  logrotate:
+    image: alpine:latest
+    container_name: log-rotator
+    restart: unless-stopped
+    volumes:
+      - log_active:/loglama/aktif
+      - log_archive:/loglama/arsiv
+      - log_signed:/loglama/imzali
+      - ./config/logrotate.conf:/etc/logrotate.conf:ro
+      - ./config/logrotate.d:/etc/logrotate.d:ro
+    environment:
+      - TZ=Europe/Istanbul
+    command: >
+      sh -c "
+        apk add --no-cache logrotate dcron &&
+        echo '0 2 * * * /usr/sbin/logrotate /etc/logrotate.conf' | crontab - &&
+        crond -f -l 2
+      "
+    networks:
+      - syslog-network
+
+  # Log Monitoring ve Alerting
+  log-monitor:
+    image: alpine:latest
+    container_name: log-monitor
+    restart: unless-stopped
+    volumes:
+      - log_active:/loglama/aktif
+      - log_archive:/loglama/arsiv
+      - log_signed:/loglama/imzali
+      - ./scripts/monitor.sh:/app/monitor.sh:ro
+    environment:
+      - TZ=Europe/Istanbul
+      - ALERT_EMAIL=admin@yourdomain.com
+      - CHECK_INTERVAL=300
+    command: >
+      sh -c "
+        apk add --no-cache bash curl mailx &&
+        chmod +x /app/monitor.sh &&
+        while true; do
+          /app/monitor.sh
+          sleep \$CHECK_INTERVAL
+        done
+      "
+    networks:
+      - syslog-network
+
+  # Web Arayüzü (Log Görüntüleme)
+  log-viewer:
+    image: nginx:alpine
+    container_name: log-viewer
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - log_active:/usr/share/nginx/html/logs/aktif:ro
+      - log_archive:/usr/share/nginx/html/logs/arsiv:ro
+      - log_signed:/usr/share/nginx/html/logs/imzali:ro
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+    environment:
+      - TZ=Europe/Istanbul
+    networks:
+      - syslog-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.log-viewer.rule=Host(`logs.yourdomain.com`)"
+      - "traefik.http.services.log-viewer.loadbalancer.server.port=80"
+
+  # Reverse Proxy (Traefik)
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"  # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./config/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - traefik_certs:/certificates
+    environment:
+      - TZ=Europe/Istanbul
+    networks:
+      - syslog-network
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.yourdomain.com`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+
+  # Elasticsearch (Log Analizi için)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - TZ=Europe/Istanbul
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - syslog-network
+    labels:
+      - "traefik.enable=false"
+
+  # Kibana (Log Görselleştirme)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - TZ=Europe/Istanbul
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - syslog-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kibana.rule=Host(`kibana.yourdomain.com`)"
+      - "traefik.http.services.kibana.loadbalancer.server.port=5601"
+
+  # Filebeat (Log Elasticsearch'e Gönderme)
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    restart: unless-stopped
+    user: root
+    volumes:
+      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - log_active:/loglama/aktif:ro
+      - log_signed:/loglama/imzali:ro
+      - filebeat_data:/usr/share/filebeat/data
+    environment:
+      - TZ=Europe/Istanbul
+    depends_on:
+      - elasticsearch
+    networks:
+      - syslog-network
+
+  # Redis (Log Caching)
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "your_redis_password"
+    volumes:
+      - redis_data:/data
+    environment:
+      - TZ=Europe/Istanbul
+    networks:
+      - syslog-network
+    labels:
+      - "traefik.enable=false"
+
+  # Backup Servisi
+  backup:
+    image: alpine:latest
+    container_name: log-backup
+    restart: unless-stopped
+    volumes:
+      - log_archive:/backup/arsiv:ro
+      - log_signed:/backup/imzali:ro
+      - ./scripts/backup.sh:/app/backup.sh:ro
+      - backup_storage:/backup/storage
+    environment:
+      - TZ=Europe/Istanbul
+      - BACKUP_RETENTION_DAYS=90
+      - S3_BUCKET=your-backup-bucket
+      - AWS_ACCESS_KEY_ID=your_access_key
+      - AWS_SECRET_ACCESS_KEY=your_secret_key
+    command: >
+      sh -c "
+        apk add --no-cache aws-cli tar gzip &&
+        chmod +x /app/backup.sh &&
+        echo '0 3 * * * /app/backup.sh' | crontab - &&
+        crond -f -l 2
+      "
+    networks:
+      - syslog-network
+
+volumes:
+  syslog_data:
+    driver: local
+  log_active:
+    driver: local
+  log_archive:
+    driver: local
+  log_signed:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  filebeat_data:
+    driver: local
+  redis_data:
+    driver: local
+  traefik_certs:
+    driver: local
+  backup_storage:
+    driver: local
+
+networks:
+  syslog-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  web:
+    external: true

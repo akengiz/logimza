@@ -1,0 +1,63 @@
+# Log İşleme ve İmzalama Servisi Dockerfile
+# /log-processor/Dockerfile
+
+FROM php:8.2-cli-alpine
+
+# Sistem paketlerini yükle
+RUN apk add --no-cache \
+    bash \
+    dcron \
+    openssl \
+    openssl-dev \
+    curl \
+    wget \
+    tar \
+    gzip \
+    logrotate \
+    supervisor \
+    && docker-php-ext-install \
+    hash \
+    && rm -rf /var/cache/apk/*
+
+# Çalışma dizinini oluştur
+WORKDIR /app
+
+# PHP uzantılarını etkinleştir
+RUN docker-php-ext-enable hash
+
+# Composer yükle
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Uygulama dosyalarını kopyala
+COPY syslog_signer.php /app/
+COPY entrypoint.sh /app/
+COPY supervisor.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Cron job'ları ayarla
+COPY crontab /var/spool/cron/crontabs/root
+
+# İzinleri ayarla
+RUN chmod +x /app/entrypoint.sh \
+    && chmod +x /app/syslog_signer.php \
+    && chmod 0644 /var/spool/cron/crontabs/root \
+    && mkdir -p /app/logs \
+    && mkdir -p /loglama/{aktif,arsiv,imzali}
+
+# Sistem kullanıcısı oluştur
+RUN addgroup -g 1000 syslog \
+    && adduser -D -s /bin/bash -u 1000 -G syslog syslog
+
+# Klasör sahipliklerini ayarla
+RUN chown -R syslog:syslog /app \
+    && chown -R syslog:syslog /loglama
+
+# Portları expose et (gerekirse)
+EXPOSE 9000
+
+# Sağlık kontrolü
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep -f "syslog_signer.php" > /dev/null || exit 1
+
+# Entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
